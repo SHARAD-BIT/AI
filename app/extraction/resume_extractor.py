@@ -1,34 +1,15 @@
-import re
+from app.llm.resume_llm_extractor import extract_resume_profile_llm
 
 
 def extract_resume_data(text: str):
-
-    skills = [
-        "python",
-        "machine learning",
-        "nlp",
-        "fastapi",
-        "docker",
-        "aws",
-        "data engineering",
-        "rest api",
-    ]
-
-    text_lower = text.lower()
-
-    found_skills = []
-
-    for skill in skills:
-        if skill in text_lower:
-            found_skills.append(skill)
-
-    experience_match = re.search(r"(\d+)\+?\s*years", text_lower)
-
-    experience = None
-    if experience_match:
-        experience = experience_match.group(1)
+    data = extract_resume_profile_llm(text)
 
     return {
-        "skills": found_skills,
-        "experience": experience
+        "candidate_name": data.candidate_name,
+        "role": data.role,
+        "domain": data.domain,
+        "skills": data.skills,
+        "experience": data.experience_years,
+        "qualifications": data.qualifications,
+        "projects": data.projects,
     }
