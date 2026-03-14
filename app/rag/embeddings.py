@@ -1,7 +1,69 @@
+import hashlib
+from typing import Iterable, List
+
+import numpy as np
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer("BAAI/bge-small-en")
+MODEL_NAME = "BAAI/bge-small-en"
+EMBEDDING_DIM = 384
+
+_model = None
+_model_failed = False
 
 
-def create_embedding(text):
-    return model.encode(text)
+def _hash_embedding(text: str) -> np.ndarray:
+    vector = np.zeros(EMBEDDING_DIM, dtype="float32")
+
+    for token in str(text).lower().split():
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        index = int.from_bytes(digest[:4], "big") % EMBEDDING_DIM
+        sign = 1.0 if digest[4] % 2 == 0 else -1.0
+        vector[index] += sign
+
+    norm = np.linalg.norm(vector)
+    if norm > 0:
+        vector = vector / norm
+
+    return vector
+
+
+def _get_model():
+    global _model, _model_failed
+
+    if _model is not None:
+        return _model
+
+    if _model_failed:
+        return None
+
+    try:
+        _model = SentenceTransformer(MODEL_NAME, local_files_only=True)
+        return _model
+    except Exception as exc:
+        _model_failed = True
+        print(f"Embedding model unavailable locally, using hash fallback: {exc}")
+        return None
+
+
+def create_embedding(text: str) -> np.ndarray:
+    model = _get_model()
+    if model is None:
+        return _hash_embedding(text)
+
+    vector = model.encode(text)
+    return np.asarray(vector, dtype="float32")
+
+
+def create_embeddings(texts: Iterable[str]) -> np.ndarray:
+    text_list: List[str] = [str(text) for text in texts]
+
+    if not text_list:
+        return np.empty((0, EMBEDDING_DIM), dtype="float32")
+
+    model = _get_model()
+    if model is None:
+        vectors = [_hash_embedding(text) for text in text_list]
+        return np.asarray(vectors, dtype="float32")
+
+    vectors = model.encode(text_list)
+    return np.asarray(vectors, dtype="float32")

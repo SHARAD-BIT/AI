@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+uploads/
+vector_store/
+
+tender-ui/node_modules/
+tender-ui/dist/

@@ -33,7 +33,7 @@ export default function AskAgent() {
       <textarea
         className="w-full p-3 rounded bg-gray-700 border border-gray-600"
         rows="4"
-        placeholder="Example: Find best resumes for this tender"
+        placeholder="Ask about the uploaded tender, uploaded resumes, or ask for matching"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
@@ -50,6 +50,28 @@ export default function AskAgent() {
         <div className="bg-gray-700 p-4 rounded-lg text-sm space-y-4">
           {answer.message && <p><strong>{answer.message}</strong></p>}
 
+          {answer.answer_text && (
+            <div className="bg-gray-800 rounded-lg p-4">
+              <p className="font-semibold mb-2">Answer</p>
+              <p>{answer.answer_text}</p>
+            </div>
+          )}
+
+          {answer.sources?.length > 0 && (
+            <div className="bg-gray-800 rounded-lg p-4">
+              <p className="font-semibold mb-2">Sources</p>
+              <ul className="space-y-1">
+                {answer.sources.map((source, index) => (
+                  <li key={index}>
+                    {source.filename} — page {source.page_start ?? "?"}
+                    {source.page_end && source.page_end !== source.page_start ? `-${source.page_end}` : ""}
+                    {source.section ? ` — ${source.section}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {answer.tender_requirements && (
             <div>
               <p className="font-semibold mb-2">Extracted Tender Requirements</p>
@@ -62,6 +84,20 @@ export default function AskAgent() {
               <p>
                 <strong>Experience:</strong>{" "}
                 {answer.tender_requirements.experience_required || "Not detected"} years
+              </p>
+            </div>
+          )}
+
+          {answer.tender_evidence_map && (
+            <div className="bg-gray-800 rounded-lg p-4">
+              <p className="font-semibold mb-2">Tender Evidence</p>
+              <p>
+                <strong>Role Page:</strong>{" "}
+                {answer.tender_evidence_map.role?.page ?? "Not detected"}
+              </p>
+              <p>
+                <strong>Experience Page:</strong>{" "}
+                {answer.tender_evidence_map.experience_required?.page ?? "Not detected"}
               </p>
             </div>
           )}
@@ -94,13 +130,16 @@ export default function AskAgent() {
                   <p><strong>Matched Preferred Skills:</strong> {item.matched_preferred_skills?.length ? item.matched_preferred_skills.join(", ") : "None"}</p>
                   <p><strong>Missing Skills:</strong> {item.missing_skills?.length ? item.missing_skills.join(", ") : "None"}</p>
                   <p><strong>Reasoning:</strong> {item.reasoning}</p>
+                  {item.candidate_evidence_map?.experience && (
+                    <p><strong>Candidate Experience Evidence Page:</strong> {item.candidate_evidence_map.experience.page ?? "Not detected"}</p>
+                  )}
                   <p><strong>Excerpt:</strong> {item.resume_excerpt}</p>
                 </div>
               ))}
             </div>
-          ) : (
+          ) : answer.mode === "matching" ? (
             <p>No matches found.</p>
-          )}
+          ) : null}
         </div>
       )}
     </div>

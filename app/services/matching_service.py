@@ -1,11 +1,86 @@
-from app.extraction.tender_extractor import extract_tender_requirements
 from app.extraction.resume_extractor import extract_resume_data
-from app.rag.resume_retriever import search_resume_vectors
-from app.rag.tender_retriever import search_tender_vectors
+from app.extraction.tender_extractor import extract_tender_requirements
 from app.graph.matching_graph import build_matching_graph
+from app.rag.resume_retriever import get_resume_document_chunks, search_resume_vectors
+from app.rag.tender_retriever import get_tender_document_chunks, search_tender_vectors
+from app.services.document_repository import (
+    get_document_by_id,
+    get_document_by_original_filename,
+    get_latest_document,
+    get_persisted_document_chunks,
+    update_document_record,
+)
+from app.services.evidence_service import build_evidence_map
 
 
 matching_graph = build_matching_graph()
+
+SECTION_PRIORITIES = {
+    "tender": {
+        "eligibility": 0,
+        "qualifications": 1,
+        "experience": 2,
+        "responsibilities": 3,
+        "personnel": 4,
+        "commercial": 5,
+        "general": 6,
+    },
+    "resume": {
+        "skills": 0,
+        "experience": 1,
+        "projects": 2,
+        "summary": 3,
+        "education": 4,
+        "certifications": 5,
+        "general": 6,
+    },
+}
+
+
+def _default_tender_requirements():
+    return {
+        "role": None,
+        "domain": None,
+        "skills_required": [],
+        "preferred_skills": [],
+        "experience_required": None,
+        "qualifications": [],
+        "responsibilities": [],
+    }
+
+
+def _normalize_token(token):
+    token = "".join(char for char in str(token).lower() if char.isalnum())
+    if token.endswith("s") and len(token) > 4:
+        token = token[:-1]
+    return token
+
+
+def _tokenize_phrase(value):
+    return {_normalize_token(token) for token in str(value).split() if _normalize_token(token)}
+
+
+def _phrase_match(a, b):
+    if not a or not b:
+        return False
+
+    a_str = str(a).strip().lower()
+    b_str = str(b).strip().lower()
+
+    if a_str == b_str or a_str in b_str or b_str in a_str:
+        return True
+
+    a_tokens = _tokenize_phrase(a_str)
+    b_tokens = _tokenize_phrase(b_str)
+
+    if not a_tokens or not b_tokens:
+        return False
+
+    overlap = a_tokens & b_tokens
+    if not overlap:
+        return False
+
+    return len(overlap) >= min(len(a_tokens), len(b_tokens))
 
 
 def _to_int(value):
@@ -20,7 +95,7 @@ def _to_int(value):
 def _text_match(a, b):
     if not a or not b:
         return False
-    return str(a).strip().lower() == str(b).strip().lower()
+    return _phrase_match(a, b)
 
 
 def _build_verdict(score, experience_match):
@@ -61,6 +136,26 @@ def _build_resume_search_query(query, tender_data):
     return " ".join(parts)
 
 
+def _chunk_sort_key(item: dict, document_type: str) -> tuple:
+    section = item.get("section") or "general"
+    section_rank = SECTION_PRIORITIES.get(document_type, {}).get(section, 99)
+    page_rank = item.get("page_start") or 0
+    chunk_rank = item.get("chunk_id") or 0
+    return (section_rank, page_rank, chunk_rank)
+
+
+def _build_document_text(chunks, fallback_text="", limit=None, document_type="resume"):
+    if not chunks:
+        return fallback_text
+
+    ordered_chunks = sorted(chunks, key=lambda item: _chunk_sort_key(item, document_type))
+    if limit is not None:
+        ordered_chunks = ordered_chunks[:limit]
+
+    text = "\n".join(item.get("text", "") for item in ordered_chunks if item.get("text"))
+    return text or fallback_text
+
+
 def _score_candidate(tender_data, resume_data):
     required_skills = tender_data.get("skills_required", [])
     preferred_skills = tender_data.get("preferred_skills", [])
@@ -74,9 +169,27 @@ def _score_candidate(tender_data, resume_data):
     tender_role = tender_data.get("role")
     tender_domain = tender_data.get("domain")
 
-    matched_skills = sorted(list(set(required_skills) & set(candidate_skills)))
-    missing_skills = sorted(list(set(required_skills) - set(candidate_skills)))
-    matched_preferred_skills = sorted(list(set(preferred_skills) & set(candidate_skills)))
+    matched_skills = sorted(
+        [
+            required_skill
+            for required_skill in required_skills
+            if any(_phrase_match(required_skill, candidate_skill) for candidate_skill in candidate_skills)
+        ]
+    )
+    missing_skills = sorted(
+        [
+            required_skill
+            for required_skill in required_skills
+            if required_skill not in matched_skills
+        ]
+    )
+    matched_preferred_skills = sorted(
+        [
+            preferred_skill
+            for preferred_skill in preferred_skills
+            if any(_phrase_match(preferred_skill, candidate_skill) for candidate_skill in candidate_skills)
+        ]
+    )
 
     if len(required_skills) == 0:
         skill_score = 0
@@ -121,122 +234,174 @@ def _score_candidate(tender_data, resume_data):
     }
 
 
+def _resolve_document(document_type: str, match: dict | None = None, fallback_latest: bool = False) -> dict | None:
+    document = None
+
+    if match and match.get("document_id") is not None:
+        document = get_document_by_id(match["document_id"])
+
+    if document is None and match and match.get("filename"):
+        document = get_document_by_original_filename(document_type, match["filename"])
+
+    if document is None and fallback_latest:
+        document = get_latest_document(document_type)
+
+    return document
+
+
+def _load_document_chunks(document_type: str, document: dict | None = None, match: dict | None = None, limit: int | None = None) -> list[dict]:
+    filename = None
+    document_id = None
+
+    if document:
+        document_id = document.get("id")
+        filename = document.get("original_filename")
+
+    if match:
+        filename = filename or match.get("filename")
+        document_id = document_id if document_id is not None else match.get("document_id")
+
+    if document_id is not None:
+        persisted = get_persisted_document_chunks(document_id, limit=limit)
+        if persisted:
+            return persisted
+
+    if document_type == "tender":
+        return get_tender_document_chunks(filename=filename, document_id=document_id, limit=limit)
+
+    return get_resume_document_chunks(filename=filename, document_id=document_id, limit=limit)
+
+
+def _extract_or_load_structured_data(document_type: str, document: dict | None, chunks: list[dict], fallback_text: str) -> tuple[dict, dict]:
+    if document and document.get("structured_data"):
+        return document["structured_data"], document.get("evidence_map", {})
+
+    source_text = _build_document_text(
+        chunks,
+        fallback_text=fallback_text,
+        limit=8 if document_type == "tender" else 6,
+        document_type=document_type,
+    )
+
+    if document_type == "tender":
+        structured_data = extract_tender_requirements(source_text)
+    else:
+        structured_data = extract_resume_data(source_text)
+
+    evidence_map = build_evidence_map(structured_data, chunks)
+
+    if document:
+        update_document_record(
+            document["id"],
+            structured_data=structured_data,
+            evidence_map=evidence_map,
+        )
+
+    return structured_data, evidence_map
+
+
 def match_resumes_with_uploaded_tender(query: str):
-    """
-    Full pipeline:
-    query
-    ↓
-    search tender index
-    ↓
-    LLM tender extraction
-    ↓
-    search resume index
-    ↓
-    LLM resume extraction
-    ↓
-    scoring
-    ↓
-    LangGraph reasoning
-    """
-
-    # 1. Find relevant tender chunks
     tender_matches = search_tender_vectors(query, top_k=5)
-    tender_chunks = [item["text"] for item in tender_matches]
+    primary_tender_match = tender_matches[0] if tender_matches else None
+    primary_tender_document = _resolve_document("tender", primary_tender_match, fallback_latest=True)
 
-    if not tender_chunks:
+    if primary_tender_document is None and not tender_matches:
         return {
             "message": "No uploaded tender data found. Please upload a tender PDF first.",
-            "tender_requirements": {
-                "role": None,
-                "domain": None,
-                "skills_required": [],
-                "preferred_skills": [],
-                "experience_required": None,
-                "qualifications": [],
-                "responsibilities": [],
-            },
+            "tender_requirements": _default_tender_requirements(),
+            "tender_evidence_map": {},
             "matches": [],
-            "reasoning_summary": "No tender available for reasoning."
+            "reasoning_summary": "No tender available for reasoning.",
         }
 
-    # 2. Merge tender chunks and extract requirements using LLM
-    tender_text = "\n".join(tender_chunks)
-    tender_data = extract_tender_requirements(tender_text)
+    tender_document_chunks = _load_document_chunks(
+        "tender",
+        document=primary_tender_document,
+        match=primary_tender_match,
+        limit=8,
+    )
+    tender_fallback_text = "\n".join(item.get("text", "") for item in tender_matches)
+    tender_data, tender_evidence_map = _extract_or_load_structured_data(
+        "tender",
+        primary_tender_document,
+        tender_document_chunks,
+        tender_fallback_text,
+    )
 
-    # 3. Build better resume search query from tender extraction
     resume_search_query = _build_resume_search_query(query, tender_data)
-
-    # 4. Search resumes
     resume_matches = search_resume_vectors(resume_search_query, top_k=10)
 
     if not resume_matches:
         return {
             "message": "No resume matches found. Please upload resume PDFs first.",
             "tender_requirements": tender_data,
+            "tender_evidence_map": tender_evidence_map,
             "matches": [],
-            "reasoning_summary": "No resume matches were available for reasoning."
+            "reasoning_summary": "No resume matches were available for reasoning.",
         }
 
     results = []
+    seen_candidates = set()
 
-    # 5. Extract resume profiles + score
     for match in resume_matches:
-        resume_text = match["text"]
-        resume_filename = match.get("filename", "unknown.pdf")
+        resume_document = _resolve_document("resume", match, fallback_latest=False)
+        candidate_key = (
+            (resume_document or {}).get("id")
+            or match.get("document_id")
+            or match.get("filename")
+        )
 
-        resume_data = extract_resume_data(resume_text)
+        if candidate_key in seen_candidates:
+            continue
+        seen_candidates.add(candidate_key)
+
+        resume_chunks = _load_document_chunks("resume", document=resume_document, match=match, limit=6)
+        resume_fallback_text = match.get("text", "")
+        resume_data, resume_evidence_map = _extract_or_load_structured_data(
+            "resume",
+            resume_document,
+            resume_chunks,
+            resume_fallback_text,
+        )
 
         scored = _score_candidate(tender_data, resume_data)
+        resume_context = _build_document_text(
+            resume_chunks,
+            fallback_text=resume_fallback_text,
+            limit=4,
+            document_type="resume",
+        )
 
-        results.append({
-            "filename": resume_filename,
-            "resume_excerpt": resume_text[:300],
-            "candidate_name": resume_data.get("candidate_name"),
-            "candidate_role": resume_data.get("role"),
-            "candidate_domain": resume_data.get("domain"),
-            "candidate_skills": resume_data.get("skills", []),
-            "candidate_qualifications": resume_data.get("qualifications", []),
-            "candidate_projects": resume_data.get("projects", []),
-            **scored
-        })
+        results.append(
+            {
+                "document_id": (resume_document or {}).get("id") or match.get("document_id"),
+                "filename": (resume_document or {}).get("original_filename") or match.get("filename", "unknown.pdf"),
+                "resume_excerpt": resume_context[:300],
+                "candidate_name": resume_data.get("candidate_name"),
+                "candidate_role": resume_data.get("role"),
+                "candidate_domain": resume_data.get("domain"),
+                "candidate_skills": resume_data.get("skills", []),
+                "candidate_qualifications": resume_data.get("qualifications", []),
+                "candidate_projects": resume_data.get("projects", []),
+                "candidate_evidence_map": resume_evidence_map,
+                **scored,
+            }
+        )
 
-    # 6. Deduplicate by filename - keep best result per file
-    best_by_file = {}
+    results.sort(key=lambda item: (item["score"], item["experience_match"]), reverse=True)
 
-    for item in results:
-        filename = item["filename"]
-
-        if filename not in best_by_file:
-            best_by_file[filename] = item
-        else:
-            current_best = best_by_file[filename]
-
-            if (
-                item["score"] > current_best["score"]
-                or (
-                    item["score"] == current_best["score"]
-                    and item["experience_match"] > current_best["experience_match"]
-                )
-            ):
-                best_by_file[filename] = item
-
-    unique_results = list(best_by_file.values())
-
-    unique_results.sort(
-        key=lambda x: (x["score"], x["experience_match"]),
-        reverse=True
+    graph_result = matching_graph.invoke(
+        {
+            "query": query,
+            "tender_requirements": tender_data,
+            "matches": results,
+        }
     )
-
-    # 7. LangGraph reasoning layer
-    graph_result = matching_graph.invoke({
-        "query": query,
-        "tender_requirements": tender_data,
-        "matches": unique_results
-    })
 
     return {
         "message": "Matching completed using uploaded tender.",
         "tender_requirements": tender_data,
-        "matches": graph_result.get("matches", unique_results),
-        "reasoning_summary": graph_result.get("reasoning_summary", "")
+        "tender_evidence_map": tender_evidence_map,
+        "matches": graph_result.get("matches", results),
+        "reasoning_summary": graph_result.get("reasoning_summary", ""),
     }

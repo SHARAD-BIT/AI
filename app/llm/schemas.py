@@ -1,5 +1,6 @@
+from typing import Any, List, Optional
+
 from pydantic import BaseModel, Field
-from typing import List, Optional
 
 
 class TenderRequirements(BaseModel):
@@ -20,3 +21,11 @@ class ResumeProfile(BaseModel):
     experience_years: Optional[int] = None
     qualifications: List[str] = Field(default_factory=list)
     projects: List[str] = Field(default_factory=list)
+
+
+class EvidenceRecord(BaseModel):
+    value: Any = None
+    source_text: Optional[str] = None
+    page: Optional[int] = None
+    section: Optional[str] = None
+    confidence: float = 0.0

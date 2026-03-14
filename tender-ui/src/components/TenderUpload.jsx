@@ -77,8 +77,13 @@ export default function TenderUpload() {
       {result && (
         <div className="rounded-lg bg-gray-700 p-3 text-sm">
           <p><strong>Message:</strong> {result.message}</p>
+          <p><strong>Status:</strong> {result.status}</p>
           <p><strong>Chunks:</strong> {result.chunks}</p>
           <p><strong>Stored Chunks:</strong> {result.stored_chunks}</p>
+          {result.pages !== undefined && <p><strong>Pages:</strong> {result.pages}</p>}
+          {result.extraction_backend && (
+            <p><strong>Extraction Backend:</strong> {result.extraction_backend}</p>
+          )}
         </div>
       )}
     </div>

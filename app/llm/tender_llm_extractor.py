@@ -1,7 +1,10 @@
+from functools import lru_cache
+
 from app.llm.provider import llm_json_extract
 from app.llm.schemas import TenderRequirements
 
 
+@lru_cache(maxsize=128)
 def extract_tender_requirements_llm(text: str) -> TenderRequirements:
     prompt = f"""
 You are an expert tender and RFP analyst.
@@ -25,7 +28,8 @@ Tender text:
 
     raw_json = llm_json_extract(
         prompt=prompt,
-        schema=TenderRequirements.model_json_schema()
+        schema=TenderRequirements.model_json_schema(),
+        task="extraction",
     )
 
     return TenderRequirements.model_validate_json(raw_json)

@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.services.matching_service import match_resumes_with_uploaded_tender
+from app.services.query_service import answer_query
 
 router = APIRouter(prefix="/match", tags=["Matching"])
 
@@ -12,7 +12,7 @@ class MatchRequest(BaseModel):
 
 @router.post("/")
 def match(request: MatchRequest):
-    results = match_resumes_with_uploaded_tender(request.query)
+    results = answer_query(request.query)
 
     return {
         "matches": results

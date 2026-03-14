@@ -5,5 +5,4 @@ router = APIRouter(prefix="/tenders", tags=["Tenders"])
 
 @router.post("/upload")
 async def upload_tender(file: UploadFile = File(...)):
-    result = await process_tender(file)
-    return {"message": "Tender stored successfully", "details": result}
+    return await process_tender(file)

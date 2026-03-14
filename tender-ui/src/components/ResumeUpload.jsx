@@ -181,7 +181,7 @@ export default function ResumeUpload() {
                   <ul className="max-h-40 space-y-1 overflow-auto">
                     {result.processed.map((item, index) => (
                       <li key={index}>
-                        {item.filename} — chunks: {item.chunks}, stored: {item.stored_chunks}
+                        {item.filename} — status: {item.status}, chunks: {item.chunks}, stored: {item.stored_chunks}
                       </li>
                     ))}
                   </ul>

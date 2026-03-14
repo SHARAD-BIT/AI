@@ -1,7 +1,10 @@
+from functools import lru_cache
+
 from app.llm.provider import llm_json_extract
 from app.llm.schemas import ResumeProfile
 
 
+@lru_cache(maxsize=256)
 def extract_resume_profile_llm(text: str) -> ResumeProfile:
     prompt = f"""
 You are an expert resume parser.
@@ -26,7 +29,8 @@ Resume text:
 
     raw_json = llm_json_extract(
         prompt=prompt,
-        schema=ResumeProfile.model_json_schema()
+        schema=ResumeProfile.model_json_schema(),
+        task="extraction",
     )
 
     return ResumeProfile.model_validate_json(raw_json)
