@@ -1,4 +1,5 @@
 from datetime import date, datetime
+import html
 import re
 from typing import Dict, List
 
@@ -29,39 +30,71 @@ NAME_NOISE_TOKENS = {
     "accounting",
     "address",
     "admit",
+    "ai",
+    "analyst",
+    "about",
+    "api",
+    "app",
+    "architect",
+    "aws",
     "business",
     "candidate",
+    "career",
     "card",
     "center",
     "city",
+    "civil",
+    "consultant",
     "curriculum",
+    "data",
+    "developer",
     "director",
+    "docker",
     "economics",
     "education",
+    "engineer",
+    "email",
     "english",
     "exam",
     "examination",
     "experience",
+    "fastapi",
     "foundation",
     "general",
+    "github",
+    "gmail",
     "hindi",
+    "image",
+    "intentionally",
     "instructions",
     "invigilator",
     "laws",
+    "lead",
+    "learning",
+    "linkedin",
     "medium",
     "mobile",
+    "machine",
+    "manager",
     "name",
+    "native",
+    "nlp",
     "number",
     "objective",
+    "omitted",
     "paper",
+    "photo",
+    "picture",
     "position",
     "profession",
     "profile",
     "project",
     "projects",
+    "python",
     "qualification",
     "qualifications",
     "reasoning",
+    "react",
     "registration",
     "resume",
     "role",
@@ -69,10 +102,14 @@ NAME_NOISE_TOKENS = {
     "signature",
     "skill",
     "skills",
+    "software",
+    "specialist",
     "staff",
     "statistics",
+    "structural",
     "summary",
     "table",
+    "technologies",
     "technology",
     "time",
     "vitae",
@@ -103,7 +140,15 @@ ADDRESS_HINTS = {
 
 
 def _normalize_whitespace(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip(" :-")
+    value = html.unescape(value or "")
+    value = re.sub(r"<br\s*/?>", " : ", value, flags=re.IGNORECASE)
+    value = re.sub(r"[*_`#~]+", " ", value)
+    value = value.replace("|", " ")
+    value = value.replace("•", " ")
+    value = value.replace("·", " ")
+    value = value.replace("‚", " ")
+    value = value.replace("Â", " ")
+    return re.sub(r"\s+", " ", value).strip(" |:-")
 
 
 def _prepare_focus_text(text: str, char_limit: int = 12000) -> str:
@@ -166,10 +211,15 @@ def _extract_value_near_label(lines: List[str], labels: List[str], stop_labels: 
                 return candidate
 
         for label in normalized_labels:
-            prefix = f"{label}:"
-            if current.startswith(prefix):
-                candidate = _normalize_whitespace(line[len(prefix):])
-                if candidate:
+            inline_match = re.match(
+                rf"^{re.escape(label)}(?![A-Za-z])\s*:?\s*(.+)$",
+                line,
+                flags=re.IGNORECASE,
+            )
+            if inline_match:
+                candidate = _normalize_whitespace(inline_match.group(1))
+                candidate_key = candidate.lower().rstrip(":")
+                if candidate and candidate_key not in normalized_stop_labels:
                     return candidate
 
     return None
@@ -179,7 +229,10 @@ def _extract_between_labels(flat_text: str, labels: List[str], stop_labels: List
     label_pattern = "|".join(re.escape(label) for label in labels)
     stop_pattern = "|".join(re.escape(label) for label in stop_labels)
 
-    pattern = rf"(?:{label_pattern})\s*:?\s*(.+?)(?=\s+(?:{stop_pattern})\s*:|$)"
+    pattern = (
+        rf"(?<![A-Za-z])(?:{label_pattern})(?![A-Za-z])\s*:?\s*(.+?)"
+        rf"(?=\s+(?<![A-Za-z])(?:{stop_pattern})(?![A-Za-z])\s*:|$)"
+    )
     match = re.search(pattern, flat_text, flags=re.IGNORECASE)
 
     if not match:
@@ -194,6 +247,10 @@ def _extract_between_labels(flat_text: str, labels: List[str], stop_labels: List
 
 def _sanitize_name(value: str | None) -> str | None:
     if not value:
+        return None
+
+    lowered_raw = value.lower()
+    if "@" in lowered_raw or ".com" in lowered_raw or ".in" in lowered_raw:
         return None
 
     value = re.sub(r"[^A-Za-z.\s'-]", " ", value)
@@ -214,6 +271,9 @@ def _sanitize_name(value: str | None) -> str | None:
 
     lowered_tokens = {token.lower().strip(".") for token in filtered}
     if lowered_tokens & NAME_NOISE_TOKENS:
+        return None
+
+    if any(len(token) <= 1 for token in filtered):
         return None
 
     return " ".join(filtered[:6])
@@ -354,7 +414,63 @@ def _sanitize_role(value: str | None) -> str | None:
     if not 1 <= len(tokens) <= 10:
         return None
 
+    lowered_tokens = {token.lower().strip(".") for token in tokens}
+    if lowered_tokens <= {"technical", "proposal"}:
+        return None
+    if lowered_tokens <= {"about", "me"}:
+        return None
+    if lowered_tokens <= {"career", "objective"}:
+        return None
+    if lowered_tokens <= {"professional", "summary"}:
+        return None
+    if lowered_tokens <= {"image"}:
+        return None
+    if {"picture", "omitted"} & lowered_tokens:
+        return None
+    if "engineering" in lowered_tokens and not lowered_tokens & {
+        "engineer",
+        "developer",
+        "manager",
+        "specialist",
+        "consultant",
+        "architect",
+        "analyst",
+        "lead",
+        "director",
+    }:
+        return None
+
     return value
+
+
+def _extract_summary_role(lines: List[str]) -> str | None:
+    for line in lines[:10]:
+        normalized_line = line
+        for prefix in [
+            "professional summary",
+            "profile summary",
+            "summary",
+            "about me",
+            "about",
+        ]:
+            lowered_line = normalized_line.lower()
+            if lowered_line.startswith(f"{prefix} "):
+                normalized_line = normalized_line[len(prefix):].strip()
+                break
+
+        summary_match = re.match(
+            r"^([A-Za-z][A-Za-z/&().,\-\s]{2,80}?)\s+with\s+\d+\+?\s+years?\s+of\s+experience",
+            normalized_line,
+            flags=re.IGNORECASE,
+        )
+        if not summary_match:
+            continue
+
+        sanitized = _sanitize_role(summary_match.group(1))
+        if sanitized:
+            return sanitized
+
+    return None
 
 
 def _extract_header_role(lines: List[str]) -> str | None:
@@ -363,10 +479,20 @@ def _extract_header_role(lines: List[str]) -> str | None:
         if lowered in {"technical proposal", "curriculum vitae", "cv", "profile"}:
             continue
 
-        if "engineer" in lowered or "manager" in lowered or "specialist" in lowered or "consultant" in lowered:
-            return _sanitize_role(line)
-
-        if index == 1 and len(line.split()) <= 10:
+        if any(
+            token in lowered
+            for token in [
+                "engineer",
+                "manager",
+                "specialist",
+                "consultant",
+                "developer",
+                "architect",
+                "analyst",
+                "lead",
+                "director",
+            ]
+        ):
             return _sanitize_role(line)
 
     return None
@@ -445,7 +571,9 @@ def _extract_role(text: str):
         ["Name of Firm", "Name of Staff", "Candidate Name", "Date of Birth", "Years with Firm/Entity", "Nationality"],
     )
     if value:
-        return _sanitize_role(value)
+        sanitized = _sanitize_role(value)
+        if sanitized:
+            return sanitized
 
     value = _extract_between_labels(
         flat_text,
@@ -454,7 +582,13 @@ def _extract_role(text: str):
         max_chars=90,
     )
     if value:
-        return _sanitize_role(value)
+        sanitized = _sanitize_role(value)
+        if sanitized:
+            return sanitized
+
+    value = _extract_summary_role(lines)
+    if value:
+        return value
 
     return _extract_header_role(lines)
 
@@ -655,3 +789,7 @@ def extract_resume_data(text: str):
 
 def extract_candidate_name(text: str) -> str | None:
     return _extract_candidate_name(text)
+
+
+def extract_candidate_role(text: str) -> str | None:
+    return _extract_role(text)

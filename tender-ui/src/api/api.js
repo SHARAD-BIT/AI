@@ -24,6 +24,11 @@ export const uploadTender = (file) => {
   return API.post("/tenders/upload", formData);
 };
 
+export const getDocumentFileUrl = (documentId) => {
+  const baseUrl = String(API.defaults.baseURL || "").replace(/\/$/, "");
+  return `${baseUrl}/documents/${documentId}/file`;
+};
+
 export const matchResumes = (tenderText) =>
   API.post("/match/", { tender_text: tenderText });
 

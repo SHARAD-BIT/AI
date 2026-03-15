@@ -18,7 +18,7 @@ export default function TenderUpload({ onUploadComplete }) {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
-    onUploadComplete?.(null);
+    onUploadComplete?.(null, null);
   };
 
   const uploadTender = async () => {
@@ -40,9 +40,7 @@ export default function TenderUpload({ onUploadComplete }) {
       });
 
       setResult(res.data);
-      if (res.data?.document_id) {
-        onUploadComplete?.(res.data.document_id);
-      }
+      onUploadComplete?.(res.data?.document_id ?? null, res.data);
     } catch (error) {
       console.error(error);
       alert("Tender upload failed");
@@ -60,7 +58,7 @@ export default function TenderUpload({ onUploadComplete }) {
         onChange={(e) => {
           setFile(e.target.files?.[0] || null);
           setResult(null);
-          onUploadComplete?.(null);
+          onUploadComplete?.(null, null);
         }}
         className="hidden"
       />

@@ -8,6 +8,18 @@ export default function ResumeUpload({ onUploadComplete }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
 
+  const collectUploadedRecords = (payload) => {
+    if (Array.isArray(payload?.processed)) {
+      return payload.processed;
+    }
+
+    if (payload?.document_id) {
+      return [payload];
+    }
+
+    return [];
+  };
+
   const handlePickFiles = () => {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -31,7 +43,7 @@ export default function ResumeUpload({ onUploadComplete }) {
     });
 
     setResult(null);
-    onUploadComplete?.([]);
+    onUploadComplete?.([], []);
   };
 
   const removeFile = (indexToRemove) => {
@@ -39,7 +51,7 @@ export default function ResumeUpload({ onUploadComplete }) {
       prevFiles.filter((_, index) => index !== indexToRemove)
     );
     setResult(null);
-    onUploadComplete?.([]);
+    onUploadComplete?.([], []);
   };
 
   const clearAllFiles = () => {
@@ -48,7 +60,7 @@ export default function ResumeUpload({ onUploadComplete }) {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
-    onUploadComplete?.([]);
+    onUploadComplete?.([], []);
   };
 
   const uploadResumes = async () => {
@@ -72,9 +84,8 @@ export default function ResumeUpload({ onUploadComplete }) {
         });
 
         setResult(res.data);
-        if (res.data?.document_id) {
-          onUploadComplete?.([res.data.document_id]);
-        }
+        const uploadedIds = res.data?.document_id ? [res.data.document_id] : [];
+        onUploadComplete?.(uploadedIds, collectUploadedRecords(res.data));
       } else {
         files.forEach((file) => {
           formData.append("files", file);
@@ -90,9 +101,7 @@ export default function ResumeUpload({ onUploadComplete }) {
         const uploadedIds = (res.data?.processed || [])
           .map((item) => item.document_id)
           .filter((value) => value !== null && value !== undefined);
-        if (uploadedIds.length > 0) {
-          onUploadComplete?.(uploadedIds);
-        }
+        onUploadComplete?.(uploadedIds, collectUploadedRecords(res.data));
       }
     } catch (error) {
       console.error(error);

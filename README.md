@@ -115,7 +115,7 @@ Uploads now follow this path:
 
 1. file validation
 2. SHA256 deduplication
-3. page-aware PDF extraction
+3. page-aware PDF extraction with `PyMuPDF4LLM` in the PyMuPDF stage, then `pdfplumber`, `Docling`, and OCR fallbacks
 4. text cleaning
 5. semantic sectioning
 6. chunking with page metadata

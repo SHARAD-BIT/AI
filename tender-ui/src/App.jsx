@@ -3,14 +3,40 @@ import API from "./api/api";
 import ResumeUpload from "./components/ResumeUpload";
 import TenderUpload from "./components/TenderUpload";
 import AskAgent from "./components/AskAgent";
+import InsightsPanel from "./components/InsightsPanel";
 
 function App() {
   const [activeResumeDocumentIds, setActiveResumeDocumentIds] = useState([]);
   const [activeTenderDocumentId, setActiveTenderDocumentId] = useState(null);
+  const [resumeUploads, setResumeUploads] = useState([]);
+  const [tenderUpload, setTenderUpload] = useState(null);
+  const [latestMatchResult, setLatestMatchResult] = useState(null);
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState("resume");
   const [uiResetKey, setUiResetKey] = useState(0);
   const [systemMessage, setSystemMessage] = useState("");
   const [systemMessageIsError, setSystemMessageIsError] = useState(false);
   const [clearingDatabase, setClearingDatabase] = useState(false);
+
+  const handleResumeUploadComplete = (documentIds = [], uploadedRecords = []) => {
+    setActiveResumeDocumentIds(documentIds);
+    setResumeUploads(uploadedRecords);
+    setLatestMatchResult(null);
+    setActiveWorkspaceTab("resume");
+  };
+
+  const handleTenderUploadComplete = (documentId = null, uploadedRecord = null) => {
+    setActiveTenderDocumentId(documentId);
+    setTenderUpload(uploadedRecord);
+    setLatestMatchResult(null);
+    setActiveWorkspaceTab("tender");
+  };
+
+  const handleAnswerReady = (answerPayload) => {
+    setLatestMatchResult(answerPayload);
+    if (Array.isArray(answerPayload?.matches) || answerPayload?.mode === "matching") {
+      setActiveWorkspaceTab("profiles");
+    }
+  };
 
   const clearDatabase = async () => {
     const confirmed = window.confirm(
@@ -30,6 +56,10 @@ function App() {
 
       setActiveResumeDocumentIds([]);
       setActiveTenderDocumentId(null);
+      setResumeUploads([]);
+      setTenderUpload(null);
+      setLatestMatchResult(null);
+      setActiveWorkspaceTab("resume");
       setUiResetKey((value) => value + 1);
       setSystemMessage(res.data?.message || "Application database cleared successfully.");
     } catch (error) {
@@ -74,7 +104,7 @@ function App() {
           <h2 className="text-xl font-semibold mb-4">Upload Resumes</h2>
           <ResumeUpload
             key={`resume-${uiResetKey}`}
-            onUploadComplete={setActiveResumeDocumentIds}
+            onUploadComplete={handleResumeUploadComplete}
           />
         </div>
 
@@ -82,7 +112,7 @@ function App() {
           <h2 className="text-xl font-semibold mb-4">Upload Tender</h2>
           <TenderUpload
             key={`tender-${uiResetKey}`}
-            onUploadComplete={setActiveTenderDocumentId}
+            onUploadComplete={handleTenderUploadComplete}
           />
         </div>
 
@@ -92,9 +122,18 @@ function App() {
             key={`ask-${uiResetKey}`}
             activeResumeDocumentIds={activeResumeDocumentIds}
             activeTenderDocumentId={activeTenderDocumentId}
+            onAnswerReady={handleAnswerReady}
           />
         </div>
       </div>
+
+      <InsightsPanel
+        activeTab={activeWorkspaceTab}
+        onTabChange={setActiveWorkspaceTab}
+        resumeUploads={resumeUploads}
+        tenderUpload={tenderUpload}
+        latestMatchResult={latestMatchResult}
+      />
     </div>
   );
 }

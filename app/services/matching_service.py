@@ -303,13 +303,19 @@ def _extract_or_load_structured_data(document_type: str, document: dict | None, 
             )
             if changed:
                 structured_data = repaired_data
-                evidence_map = dict(evidence_map or {})
-                candidate_evidence = build_evidence_map(
-                    {"candidate_name": structured_data.get("candidate_name")},
-                    [source_chunk] if source_chunk else chunks,
-                ).get("candidate_name")
-                if candidate_evidence:
-                    evidence_map["candidate_name"] = candidate_evidence
+                evidence_map = dict(build_evidence_map(structured_data, chunks))
+                if source_chunk:
+                    preferred_evidence = build_evidence_map(
+                        {
+                            "candidate_name": structured_data.get("candidate_name"),
+                            "role": structured_data.get("role"),
+                        },
+                        [source_chunk],
+                    )
+                    if preferred_evidence.get("candidate_name"):
+                        evidence_map["candidate_name"] = preferred_evidence["candidate_name"]
+                    if preferred_evidence.get("role"):
+                        evidence_map["role"] = preferred_evidence["role"]
                 update_document_record(
                     document["id"],
                     structured_data=structured_data,

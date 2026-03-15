@@ -4,10 +4,26 @@ import API from "../api/api";
 export default function AskAgent({
   activeResumeDocumentIds = [],
   activeTenderDocumentId = null,
+  onAnswerReady,
 }) {
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  const fetchRankedProfiles = async () => {
+    if (!activeTenderDocumentId || !activeResumeDocumentIds.length) {
+      return null;
+    }
+
+    const res = await API.post("/match/", {
+      query: "shortlist top matching profiles for the uploaded tender",
+      tender_document_id: activeTenderDocumentId,
+      resume_document_ids: activeResumeDocumentIds,
+      restrict_to_active_uploads: true,
+    });
+
+    return res.data?.matches || null;
+  };
 
   const askAI = async () => {
     if (!query.trim()) {
@@ -25,7 +41,27 @@ export default function AskAgent({
         restrict_to_active_uploads: true,
       });
 
-      setAnswer(res.data.matches);
+      const answerPayload = res.data?.matches || null;
+      setAnswer(answerPayload);
+
+      let profilesPayload = answerPayload;
+      const needsProfileFetch =
+        answerPayload?.mode !== "matching" &&
+        activeTenderDocumentId &&
+        activeResumeDocumentIds.length > 0;
+
+      if (needsProfileFetch) {
+        try {
+          const rankedProfiles = await fetchRankedProfiles();
+          if (rankedProfiles) {
+            profilesPayload = rankedProfiles;
+          }
+        } catch (profileError) {
+          console.error(profileError);
+        }
+      }
+
+      onAnswerReady?.(profilesPayload);
     } catch (error) {
       console.error(error);
       alert("Matching failed");
