@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import API from "../api/api";
 
-export default function TenderUpload() {
+export default function TenderUpload({ onUploadComplete }) {
   const fileInputRef = useRef(null);
 
   const [file, setFile] = useState(null);
@@ -10,6 +10,15 @@ export default function TenderUpload() {
 
   const handlePickFile = () => {
     fileInputRef.current?.click();
+  };
+
+  const clearTender = () => {
+    setFile(null);
+    setResult(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    onUploadComplete?.(null);
   };
 
   const uploadTender = async () => {
@@ -31,6 +40,9 @@ export default function TenderUpload() {
       });
 
       setResult(res.data);
+      if (res.data?.document_id) {
+        onUploadComplete?.(res.data.document_id);
+      }
     } catch (error) {
       console.error(error);
       alert("Tender upload failed");
@@ -48,17 +60,29 @@ export default function TenderUpload() {
         onChange={(e) => {
           setFile(e.target.files?.[0] || null);
           setResult(null);
+          onUploadComplete?.(null);
         }}
         className="hidden"
       />
 
-      <button
-        type="button"
-        onClick={handlePickFile}
-        className="w-full rounded-lg border border-gray-500 bg-gray-700 px-4 py-3 text-white hover:bg-gray-600"
-      >
-        {file ? "Change Tender File" : "Choose Tender File"}
-      </button>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={handlePickFile}
+          className="w-full rounded-lg border border-gray-500 bg-gray-700 px-4 py-3 text-white hover:bg-gray-600"
+        >
+          {file ? "Change Tender File" : "Choose Tender File"}
+        </button>
+
+        <button
+          type="button"
+          onClick={clearTender}
+          disabled={!file && !result}
+          className="w-full rounded-lg border border-red-400 bg-transparent px-4 py-3 text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Clear
+        </button>
+      </div>
 
       {file && (
         <div className="rounded-lg bg-gray-700 p-3 text-sm">

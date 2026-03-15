@@ -4,7 +4,7 @@ FastAPI backend plus React UI for:
 - uploading tender PDFs
 - uploading one or many resume PDFs
 - storing chunk embeddings in FAISS
-- extracting structured tender and resume data with Ollama or Gemini
+- extracting structured tender and resume data with Ollama
 - matching resumes against the latest uploaded tender
 - persisting document registry, structured outputs, and evidence maps in SQLAlchemy-backed storage
 
@@ -19,7 +19,6 @@ This project is working as an MVP:
 
 Known limitations:
 - local Ollama must be installed, running, and have the model pulled
-- Gemini free-tier quota can still return `429 RESOURCE_EXHAUSTED` when used as fallback
 - semantic sectioning and evidence mapping are heuristic-first and can still be improved
 - runtime artifacts in `uploads/` and `vector_store/` are local-only and should not be committed
 
@@ -28,7 +27,6 @@ Known limitations:
 - Python 3.11+ or newer
 - Node.js 18+ for the UI
 - Ollama for local LLM inference
-- optional Gemini API key from Google AI Studio for fallback
 
 ## Environment Setup
 
@@ -43,8 +41,6 @@ OLLAMA_REASONING_MODEL=mistral
 OLLAMA_FALLBACK_MODEL=llama3.2
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_TIMEOUT_SECONDS=90
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_API_KEY=your_gemini_api_key_here
 DATABASE_URL=sqlite:///./tender_rag.db
 MAX_UPLOAD_FILE_SIZE_MB=25
 ```
@@ -67,7 +63,6 @@ With the default `.env`, the backend uses:
 - `phi3` for JSON extraction
 - `mistral` for Q&A reasoning
 - `llama3.2` as the Ollama fallback model
-- Gemini after Ollama fallback models fail
 
 ## Backend Setup
 
@@ -139,16 +134,4 @@ Uploads now follow this path:
 
 ## Security Note
 
-Do not commit real API keys in `.env`.
-
-If a Gemini key is ever exposed:
-
-1. revoke it in Google AI Studio
-2. create a new key
-3. update local `.env`
-
-Google AI Studio key page:
-
-```text
-https://aistudio.google.com/app/apikey
-```
+Do not commit secrets in `.env`.

@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 from datetime import datetime
 
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, func, select
 
 from app.database.connection import init_db, session_scope
 from app.models.db_models import Document, DocumentChunk
@@ -64,6 +64,57 @@ def get_document_by_id(document_id: int) -> dict | None:
     with session_scope() as db:
         document = db.scalar(select(Document).where(Document.id == document_id))
         return _document_to_dict(document)
+
+
+def delete_all_documents() -> dict[str, int]:
+    with session_scope() as db:
+        document_count = db.scalar(select(func.count()).select_from(Document)) or 0
+        chunk_count = db.scalar(select(func.count()).select_from(DocumentChunk)) or 0
+
+        db.execute(delete(DocumentChunk))
+        db.execute(delete(Document))
+
+        return {
+            "documents_deleted": int(document_count),
+            "chunks_deleted": int(chunk_count),
+        }
+
+
+def get_documents_by_ids(document_ids: list[int]) -> list[dict]:
+    ordered_ids = []
+    seen = set()
+
+    for value in document_ids:
+        try:
+            document_id = int(value)
+        except (TypeError, ValueError):
+            continue
+
+        if document_id in seen:
+            continue
+
+        seen.add(document_id)
+        ordered_ids.append(document_id)
+
+    if not ordered_ids:
+        return []
+
+    with session_scope() as db:
+        documents = db.scalars(
+            select(Document).where(Document.id.in_(ordered_ids))
+        ).all()
+
+    documents_by_id = {
+        document.id: _document_to_dict(document)
+        for document in documents
+        if document is not None
+    }
+
+    return [
+        documents_by_id[document_id]
+        for document_id in ordered_ids
+        if document_id in documents_by_id
+    ]
 
 
 def get_latest_document(document_type: str) -> dict | None:

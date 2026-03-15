@@ -70,17 +70,18 @@ def classify_query_intent(query: str, has_tender: bool, has_resume: bool) -> dic
 
 
 def build_answer_prompt(query: str, scope_label: str, structured_contexts: list[dict], chunks: list[dict]) -> str:
-    structured_json = json.dumps(structured_contexts[:3], ensure_ascii=True, indent=2)
+    structured_json = json.dumps(structured_contexts[:2], ensure_ascii=True, indent=2)
 
     rendered_chunks = []
-    for index, chunk in enumerate(chunks[:8], start=1):
+    for index, chunk in enumerate(chunks[:5], start=1):
         filename = chunk.get("filename", "unknown.pdf")
         page_start = chunk.get("page_start") or "?"
         page_end = chunk.get("page_end") or page_start
         section = chunk.get("section") or "general"
         text = chunk.get("text", "").strip()
+        compact_text = " ".join(text.split())[:1200]
         rendered_chunks.append(
-            f"[{index}] file={filename} page={page_start}-{page_end} section={section}\n{text}"
+            f"[{index}] file={filename} page={page_start}-{page_end} section={section}\n{compact_text}"
         )
 
     chunk_block = "\n\n".join(rendered_chunks)
@@ -90,6 +91,9 @@ You answer questions using only the supplied {scope_label} context.
 
 Rules:
 - Answer directly and concisely.
+- Treat retrieved context as the primary evidence.
+- Use structured context only as a secondary hint and ignore it if it conflicts with retrieved context.
+- If multiple uploaded documents support different answers, say the question is ambiguous and list the plausible answers with sources.
 - If the answer is not supported by the context, say so clearly.
 - Mention source filename and page numbers when possible.
 - Do not invent facts.

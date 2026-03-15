@@ -1,7 +1,10 @@
 import { useState } from "react";
 import API from "../api/api";
 
-export default function AskAgent() {
+export default function AskAgent({
+  activeResumeDocumentIds = [],
+  activeTenderDocumentId = null,
+}) {
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -17,6 +20,9 @@ export default function AskAgent() {
 
       const res = await API.post("/match/", {
         query: query,
+        tender_document_id: activeTenderDocumentId,
+        resume_document_ids: activeResumeDocumentIds,
+        restrict_to_active_uploads: true,
       });
 
       setAnswer(res.data.matches);

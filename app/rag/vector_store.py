@@ -1,5 +1,6 @@
 import os
 import pickle
+import re
 from typing import Any, List, Tuple
 
 import faiss
@@ -11,6 +12,9 @@ from app.rag.embeddings import EMBEDDING_DIM, create_embedding, create_embedding
 
 VECTOR_DIR = "vector_store"
 os.makedirs(VECTOR_DIR, exist_ok=True)
+
+TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+RRF_K = 60
 
 
 def _ensure_index_materialized(index_name: str) -> None:
@@ -207,6 +211,121 @@ def search_index(index_name: str, query_text: str, top_k: int = 3):
     return results
 
 
+def _tokenize_for_search(text: str) -> list[str]:
+    return TOKEN_PATTERN.findall(str(text).lower())
+
+
+def _keyword_score(query_text: str, chunk_text: str) -> float:
+    query = str(query_text or "").strip().lower()
+    text = str(chunk_text or "").strip().lower()
+
+    if not query or not text:
+        return 0.0
+
+    query_tokens = set(_tokenize_for_search(query))
+    if not query_tokens:
+        return 0.0
+
+    text_tokens = set(_tokenize_for_search(text))
+    if not text_tokens:
+        return 0.0
+
+    overlap = query_tokens & text_tokens
+    if not overlap:
+        return 0.0
+
+    score = len(overlap) / len(query_tokens)
+
+    if query in text:
+        score += 1.0
+
+    contiguous_overlap = " ".join(token for token in query.split() if token in overlap)
+    if contiguous_overlap and contiguous_overlap in text:
+        score += 0.5
+
+    return score
+
+
+def search_index_hybrid(
+    index_name: str,
+    query_text: str,
+    top_k: int = 6,
+    semantic_multiplier: int = 4,
+    lexical_multiplier: int = 8,
+):
+    if not query_text or not query_text.strip():
+        return []
+
+    index, metadata = load_index(index_name)
+    if index.ntotal == 0 or len(metadata) == 0:
+        return []
+
+    semantic_limit = max(top_k, top_k * semantic_multiplier)
+    semantic_results = search_index(index_name, query_text, top_k=semantic_limit)
+
+    lexical_scored = []
+    lexical_limit = max(top_k, top_k * lexical_multiplier)
+    for idx, item in enumerate(metadata):
+        score = _keyword_score(query_text, item.get("text", ""))
+        if score <= 0:
+            continue
+        lexical_scored.append((score, idx, item))
+
+    lexical_scored.sort(key=lambda entry: (entry[0], -len(str(entry[2].get("text", "")))), reverse=True)
+    lexical_results = [
+        {
+            "filename": item.get("filename", "unknown.pdf"),
+            "text": item.get("text", ""),
+            "chunk_id": item.get("chunk_id"),
+            "document_id": item.get("document_id"),
+            "document_type": item.get("document_type"),
+            "section": item.get("section"),
+            "page_start": item.get("page_start"),
+            "page_end": item.get("page_end"),
+            "embedding_backend": item.get("embedding_backend", "faiss"),
+            "keyword_score": float(score),
+            "index": int(idx),
+        }
+        for score, idx, item in lexical_scored[:lexical_limit]
+    ]
+
+    fused_results: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
+
+    for rank, result in enumerate(semantic_results, start=1):
+        key = (
+            result.get("document_id"),
+            result.get("filename"),
+            result.get("chunk_id"),
+        )
+        entry = fused_results.setdefault(key, dict(result))
+        entry["semantic_rank"] = rank
+        entry["retrieval_score"] = entry.get("retrieval_score", 0.0) + (1.0 / (RRF_K + rank))
+
+    for rank, result in enumerate(lexical_results, start=1):
+        key = (
+            result.get("document_id"),
+            result.get("filename"),
+            result.get("chunk_id"),
+        )
+        entry = fused_results.setdefault(key, dict(result))
+        for field, value in result.items():
+            entry.setdefault(field, value)
+        entry["keyword_rank"] = rank
+        entry["retrieval_score"] = entry.get("retrieval_score", 0.0) + (1.0 / (RRF_K + rank))
+
+    ranked = sorted(
+        fused_results.values(),
+        key=lambda item: (
+            item.get("retrieval_score", 0.0),
+            item.get("keyword_score", 0.0),
+            -item.get("distance", float("inf")),
+        ),
+        reverse=True,
+    )
+
+    return ranked[:top_k]
+
+
 def get_document_chunks(
     index_name: str,
     filename: str | None = None,
@@ -246,3 +365,30 @@ def get_document_chunks(
         chunks = chunks[:limit]
 
     return chunks
+
+
+def get_chunk_window(
+    index_name: str,
+    *,
+    center_chunk_id: int | None,
+    window: int = 1,
+    filename: str | None = None,
+    document_id: int | None = None,
+) -> list[dict]:
+    if center_chunk_id is None:
+        return []
+
+    lower_bound = center_chunk_id - max(0, window)
+    upper_bound = center_chunk_id + max(0, window)
+
+    chunks = get_document_chunks(
+        index_name,
+        filename=filename,
+        document_id=document_id,
+    )
+
+    return [
+        chunk
+        for chunk in chunks
+        if chunk.get("chunk_id") is not None and lower_bound <= chunk["chunk_id"] <= upper_bound
+    ]

@@ -7,7 +7,6 @@ faiss-cpu
 python-multipart
 sqlalchemy
 psycopg2-binary
-google-genai
 python-dotenv
 pillow
 pytesseract

@@ -25,6 +25,82 @@ RESUME_SKILL_PATTERNS = [
     ("dpr", "Detailed Project Report"),
 ]
 
+NAME_NOISE_TOKENS = {
+    "accounting",
+    "address",
+    "admit",
+    "business",
+    "candidate",
+    "card",
+    "center",
+    "city",
+    "curriculum",
+    "director",
+    "economics",
+    "education",
+    "english",
+    "exam",
+    "examination",
+    "experience",
+    "foundation",
+    "general",
+    "hindi",
+    "instructions",
+    "invigilator",
+    "laws",
+    "medium",
+    "mobile",
+    "name",
+    "number",
+    "objective",
+    "paper",
+    "position",
+    "profession",
+    "profile",
+    "project",
+    "projects",
+    "qualification",
+    "qualifications",
+    "reasoning",
+    "registration",
+    "resume",
+    "role",
+    "roll",
+    "signature",
+    "skill",
+    "skills",
+    "staff",
+    "statistics",
+    "summary",
+    "table",
+    "technology",
+    "time",
+    "vitae",
+}
+
+ADDRESS_HINTS = {
+    "address",
+    "apartment",
+    "block",
+    "building",
+    "colony",
+    "district",
+    "email",
+    "floor",
+    "house",
+    "lane",
+    "locality",
+    "pin",
+    "pincode",
+    "po",
+    "post",
+    "road",
+    "sector",
+    "state",
+    "street",
+    "village",
+}
+
 
 def _normalize_whitespace(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip(" :-")
@@ -136,7 +212,132 @@ def _sanitize_name(value: str | None) -> str | None:
     if len(filtered) < 2:
         return None
 
+    lowered_tokens = {token.lower().strip(".") for token in filtered}
+    if lowered_tokens & NAME_NOISE_TOKENS:
+        return None
+
     return " ".join(filtered[:6])
+
+
+def _looks_like_address(line: str) -> bool:
+    lowered = line.lower()
+
+    if "@" in lowered or re.search(r"\d", line):
+        return True
+
+    return any(token in lowered for token in ADDRESS_HINTS)
+
+
+def _looks_like_date_marker(line: str) -> bool:
+    normalized = _normalize_whitespace(line)
+
+    if re.fullmatch(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", normalized):
+        return True
+
+    return bool(
+        re.fullmatch(
+            r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*,?\s+\d{4}",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _score_name_line(lines: List[str], index: int) -> tuple[int, str | None]:
+    sanitized = _sanitize_name(lines[index])
+    if not sanitized:
+        return 0, None
+
+    score = 1
+    lowered_window = " ".join(lines[max(0, index - 5):index]).lower()
+
+    if any(label in lowered_window for label in ["name of staff", "name of candidate", "candidate name", "candidate's name"]):
+        score += 3
+
+    if index > 0 and _looks_like_date_marker(lines[index - 1]):
+        score += 2
+
+    if index + 1 < len(lines) and _looks_like_address(lines[index + 1]):
+        score += 2
+
+    if index <= 6:
+        score += 2
+
+    if 2 <= len(sanitized.split()) <= 4:
+        score += 1
+
+    return score, sanitized
+
+
+def _extract_name_from_label_window(lines: List[str]) -> str | None:
+    normalized_labels = {
+        "name of staff",
+        "name of candidate",
+        "candidate name",
+        "candidate's name",
+    }
+    normalized_stop_labels = {
+        "candidate's address",
+        "candidate address",
+        "address",
+        "roll no",
+        "roll no.",
+        "city",
+        "candidate's signature",
+        "signature",
+        "medium",
+        "registration no",
+        "registration no.",
+        "registration number",
+        "mobile number",
+        "mobile no",
+        "center of examination",
+        "centre of examination",
+        "date of birth",
+        "years with firm/entity",
+        "nationality",
+        "membership of professional societies",
+        "detailed task assigned",
+    }
+
+    for index, line in enumerate(lines):
+        current = line.lower().rstrip(":")
+        if current not in normalized_labels:
+            continue
+
+        best_match = None
+        best_score = 0
+
+        for next_index in range(index + 1, min(index + 40, len(lines))):
+            candidate = lines[next_index].lower().rstrip(":")
+            if candidate in normalized_stop_labels:
+                continue
+
+            score, sanitized = _score_name_line(lines, next_index)
+            if sanitized and score > best_score:
+                best_match = sanitized
+                best_score = score
+
+        if best_match:
+            return best_match
+
+    return None
+
+
+def _extract_name_from_scored_lines(lines: List[str]) -> str | None:
+    best_match = None
+    best_score = 0
+
+    for index in range(min(len(lines), 80)):
+        score, sanitized = _score_name_line(lines, index)
+        if sanitized and score > best_score:
+            best_match = sanitized
+            best_score = score
+
+    if best_match and best_score >= 3:
+        return best_match
+
+    return None
 
 
 def _sanitize_role(value: str | None) -> str | None:
@@ -177,29 +378,61 @@ def _extract_candidate_name(text: str):
 
     value = _extract_value_near_label(
         lines,
-        ["Name of Staff", "Name of Candidate", "Candidate Name"],
-        ["Profession", "Date of Birth", "Years with Firm/Entity", "Nationality", "Membership of Professional Societies"],
+        ["Name of Staff", "Name of Candidate", "Candidate Name", "Candidate's Name"],
+        [
+            "Candidate's Address",
+            "Address",
+            "Roll No",
+            "City",
+            "Candidate's Signature",
+            "Medium",
+            "Registration No",
+            "Mobile Number",
+            "Center of Examination",
+            "Profession",
+            "Date of Birth",
+            "Years with Firm/Entity",
+            "Nationality",
+            "Membership of Professional Societies",
+        ],
     )
     if value:
-        return _sanitize_name(value)
-
-    value = _extract_between_labels(
-        flat_text,
-        ["Name of Staff", "Name of Candidate", "Candidate Name"],
-        ["Profession", "Date of Birth", "Years with Firm/Entity", "Nationality", "Membership of Professional Societies", "Detailed Task Assigned"],
-        max_chars=80,
-    )
-    if value:
-        return _sanitize_name(value)
-
-    for line in lines[:40]:
-        if line.lower() == "name":
-            continue
-        sanitized = _sanitize_name(line)
+        sanitized = _sanitize_name(value)
         if sanitized:
             return sanitized
 
-    return None
+    value = _extract_name_from_label_window(lines)
+    if value:
+        return value
+
+    value = _extract_between_labels(
+        flat_text,
+        ["Name of Staff", "Name of Candidate", "Candidate Name", "Candidate's Name"],
+        [
+            "Candidate's Address",
+            "Address",
+            "Roll No",
+            "City",
+            "Candidate's Signature",
+            "Medium",
+            "Registration No",
+            "Mobile Number",
+            "Center of Examination",
+            "Profession",
+            "Date of Birth",
+            "Years with Firm/Entity",
+            "Nationality",
+            "Membership of Professional Societies",
+            "Detailed Task Assigned",
+        ],
+        max_chars=80,
+    )
+    if value:
+        sanitized = _sanitize_name(value)
+        if sanitized:
+            return sanitized
+
+    return _extract_name_from_scored_lines(lines)
 
 
 def _extract_role(text: str):
@@ -418,3 +651,7 @@ def extract_resume_data(text: str):
         "qualifications": heuristic["qualifications"] or llm_qualifications,
         "projects": heuristic["projects"] or llm_projects,
     }
+
+
+def extract_candidate_name(text: str) -> str | None:
+    return _extract_candidate_name(text)

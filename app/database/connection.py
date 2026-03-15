@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from contextlib import contextmanager
 
 from dotenv import load_dotenv
@@ -60,3 +61,26 @@ def init_db() -> None:
     from app.models import db_models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+
+
+def vacuum_sqlite_database() -> bool:
+    if not DATABASE_URL.startswith("sqlite:///"):
+        return False
+
+    database_path = DATABASE_URL.removeprefix("sqlite:///")
+    if not database_path or database_path == ":memory:":
+        return False
+
+    database_path = os.path.abspath(database_path)
+    if not os.path.exists(database_path):
+        return False
+
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        connection.execute("VACUUM;")
+        connection.commit()
+    finally:
+        connection.close()
+
+    return True

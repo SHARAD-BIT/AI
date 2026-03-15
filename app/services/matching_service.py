@@ -6,11 +6,13 @@ from app.rag.tender_retriever import get_tender_document_chunks, search_tender_v
 from app.services.document_repository import (
     get_document_by_id,
     get_document_by_original_filename,
+    get_documents_by_ids,
     get_latest_document,
     get_persisted_document_chunks,
     update_document_record,
 )
 from app.services.evidence_service import build_evidence_map
+from app.services.resume_name_service import repair_resume_structured_data
 
 
 matching_graph = build_matching_graph()
@@ -249,6 +251,22 @@ def _resolve_document(document_type: str, match: dict | None = None, fallback_la
     return document
 
 
+def _get_active_documents(document_type: str, document_ids: list[int] | None = None) -> list[dict]:
+    if not document_ids:
+        return []
+
+    active_documents = []
+    for document in get_documents_by_ids(document_ids):
+        if (
+            document
+            and document.get("document_type") == document_type
+            and document.get("status") == "stored"
+        ):
+            active_documents.append(document)
+
+    return active_documents
+
+
 def _load_document_chunks(document_type: str, document: dict | None = None, match: dict | None = None, limit: int | None = None) -> list[dict]:
     filename = None
     document_id = None
@@ -274,7 +292,31 @@ def _load_document_chunks(document_type: str, document: dict | None = None, matc
 
 def _extract_or_load_structured_data(document_type: str, document: dict | None, chunks: list[dict], fallback_text: str) -> tuple[dict, dict]:
     if document and document.get("structured_data"):
-        return document["structured_data"], document.get("evidence_map", {})
+        structured_data = document["structured_data"]
+        evidence_map = document.get("evidence_map", {})
+
+        if document_type == "resume":
+            repaired_data, source_chunk, changed = repair_resume_structured_data(
+                structured_data,
+                chunks,
+                document=document,
+            )
+            if changed:
+                structured_data = repaired_data
+                evidence_map = dict(evidence_map or {})
+                candidate_evidence = build_evidence_map(
+                    {"candidate_name": structured_data.get("candidate_name")},
+                    [source_chunk] if source_chunk else chunks,
+                ).get("candidate_name")
+                if candidate_evidence:
+                    evidence_map["candidate_name"] = candidate_evidence
+                update_document_record(
+                    document["id"],
+                    structured_data=structured_data,
+                    evidence_map=evidence_map,
+                )
+
+        return structured_data, evidence_map
 
     source_text = _build_document_text(
         chunks,
@@ -300,10 +342,51 @@ def _extract_or_load_structured_data(document_type: str, document: dict | None, 
     return structured_data, evidence_map
 
 
-def match_resumes_with_uploaded_tender(query: str):
-    tender_matches = search_tender_vectors(query, top_k=5)
-    primary_tender_match = tender_matches[0] if tender_matches else None
-    primary_tender_document = _resolve_document("tender", primary_tender_match, fallback_latest=True)
+def match_resumes_with_uploaded_tender(
+    query: str,
+    tender_document_id: int | None = None,
+    resume_document_ids: list[int] | None = None,
+    restrict_to_active_uploads: bool = False,
+):
+    tender_scope_requested = tender_document_id is not None
+    resume_scope_requested = bool(resume_document_ids)
+    active_scope_enabled = (
+        restrict_to_active_uploads
+        or tender_scope_requested
+        or resume_scope_requested
+    )
+    active_tender_documents = _get_active_documents(
+        "tender",
+        [tender_document_id] if tender_scope_requested else None,
+    )
+    active_resume_documents = _get_active_documents("resume", resume_document_ids)
+
+    tender_matches = []
+    primary_tender_match = None
+    primary_tender_document = active_tender_documents[0] if active_tender_documents else None
+
+    if active_scope_enabled and primary_tender_document is None:
+        return {
+            "message": "No uploaded tender data found for the current session.",
+            "tender_requirements": _default_tender_requirements(),
+            "tender_evidence_map": {},
+            "matches": [],
+            "reasoning_summary": "No tender available for reasoning.",
+        }
+
+    if active_scope_enabled and not active_resume_documents:
+        return {
+            "message": "No uploaded resume data found for the current session.",
+            "tender_requirements": _default_tender_requirements(),
+            "tender_evidence_map": {},
+            "matches": [],
+            "reasoning_summary": "No resume matches were available for reasoning.",
+        }
+
+    if primary_tender_document is None:
+        tender_matches = search_tender_vectors(query, top_k=5)
+        primary_tender_match = tender_matches[0] if tender_matches else None
+        primary_tender_document = _resolve_document("tender", primary_tender_match, fallback_latest=True)
 
     if primary_tender_document is None and not tender_matches:
         return {
@@ -329,7 +412,17 @@ def match_resumes_with_uploaded_tender(query: str):
     )
 
     resume_search_query = _build_resume_search_query(query, tender_data)
-    resume_matches = search_resume_vectors(resume_search_query, top_k=10)
+    if active_resume_documents:
+        resume_matches = [
+            {
+                "document_id": document.get("id"),
+                "filename": document.get("original_filename"),
+                "text": "",
+            }
+            for document in active_resume_documents
+        ]
+    else:
+        resume_matches = search_resume_vectors(resume_search_query, top_k=10)
 
     if not resume_matches:
         return {

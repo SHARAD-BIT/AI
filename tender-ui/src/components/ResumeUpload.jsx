@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import API from "../api/api";
 
-export default function ResumeUpload() {
+export default function ResumeUpload({ onUploadComplete }) {
   const fileInputRef = useRef(null);
 
   const [files, setFiles] = useState([]);
@@ -31,17 +31,24 @@ export default function ResumeUpload() {
     });
 
     setResult(null);
+    onUploadComplete?.([]);
   };
 
   const removeFile = (indexToRemove) => {
     setFiles((prevFiles) =>
       prevFiles.filter((_, index) => index !== indexToRemove)
     );
+    setResult(null);
+    onUploadComplete?.([]);
   };
 
   const clearAllFiles = () => {
     setFiles([]);
     setResult(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    onUploadComplete?.([]);
   };
 
   const uploadResumes = async () => {
@@ -65,6 +72,9 @@ export default function ResumeUpload() {
         });
 
         setResult(res.data);
+        if (res.data?.document_id) {
+          onUploadComplete?.([res.data.document_id]);
+        }
       } else {
         files.forEach((file) => {
           formData.append("files", file);
@@ -77,6 +87,12 @@ export default function ResumeUpload() {
         });
 
         setResult(res.data);
+        const uploadedIds = (res.data?.processed || [])
+          .map((item) => item.document_id)
+          .filter((value) => value !== null && value !== undefined);
+        if (uploadedIds.length > 0) {
+          onUploadComplete?.(uploadedIds);
+        }
       }
     } catch (error) {
       console.error(error);
@@ -109,10 +125,10 @@ export default function ResumeUpload() {
         <button
           type="button"
           onClick={clearAllFiles}
-          disabled={!files.length}
+          disabled={!files.length && !result}
           className="w-full rounded-lg border border-red-400 bg-transparent px-4 py-3 text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Clear All
+          Clear
         </button>
       </div>
 
