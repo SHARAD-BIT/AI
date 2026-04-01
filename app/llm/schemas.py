@@ -8,11 +8,13 @@ class TenderRequirements(BaseModel):
     role_generic: Optional[str] = None
     domain: Optional[str] = None
     domain_generic: Optional[str] = None
+    summary: Optional[str] = None
     skills_required: List[RawGenericItem] = Field(default_factory=list)
     preferred_skills: List[RawGenericItem] = Field(default_factory=list)
     experience_required: Optional[int] = None
     qualifications: List[RawGenericItem] = Field(default_factory=list)
     responsibilities: List[str] = Field(default_factory=list)
+    summary_for_matching: Optional[MatchingSummary] = None
 
 
 class RawGenericItem(BaseModel):

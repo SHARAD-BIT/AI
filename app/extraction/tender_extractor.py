@@ -259,6 +259,9 @@ def extract_tender_requirements(text: str):
     if not result.get("responsibilities") and heuristic.get("responsibilities"):
         result["responsibilities"] = heuristic["responsibilities"]
 
+    if not result.get("summary") and result.get("role"):
+        result["summary"] = f"Requirement for {result['role']} in {result.get('domain') or 'infrastructure'} domain."
+
     return result
 
 

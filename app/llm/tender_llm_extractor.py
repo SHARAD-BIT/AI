@@ -14,11 +14,15 @@ Standardize hiring or project requirements from tender text into a deterministic
 
 Tasks:
 
-1. Extract core requirements: role, domain, skills_required, preferred_skills, experience_required, qualifications, and responsibilities.
+1. Extract core requirements: role, domain, summary, skills_required, preferred_skills, experience_required, qualifications, and responsibilities.
 
-2. For role, domain, skills, and qualifications, you MUST generate both "raw" (original phrase) and "generic" (normalized) values.
+2. Generate an "executive summary" (2-3 sentences) of the overall requirement.
 
-3. Generic Normalization Rules:
+3. Provide "summary_for_matching" containing "must_store_generic_values" representing the standardized IDs for matching.
+
+4. For role, domain, skills, and qualifications, you MUST generate both "raw" (original phrase) and "generic" (normalized) values.
+
+5. Generic Normalization Rules:
 - Lowercase, underscore_separated, no punctuation, no duplicates.
 - Map surface forms to a single canonical concept.
 - Examples: 
@@ -27,7 +31,7 @@ Tasks:
   "HOD Roads", "Project Director highway" -> "highway_project_director"
   "Road projects", "Expressways", "National Highways" -> "road_transport_infrastructure"
 
-4. Experience: Convert "10+ years", "Minimum 10 years" to integer 10.
+6. Experience: Convert "10+ years", "Minimum 10 years" to integer 10.
 
 Tender text:
 {text}
